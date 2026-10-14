@@ -1,0 +1,96 @@
+<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>敵人演化原型</title>
+<style>
+:root{--bg:#e6ebe4;--fg:#1d2a22;--mut:#5d6d62;--pn:#f3f6f0;--ln:#c3cfc2;--ac:#2f7a55;--bad:#b3402a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121a15;--fg:#dbe7de;--mut:#8fa396;--pn:#18221c;--ln:#2c3b31;--ac:#6fcf9b;--bad:#e0735c}}
+:root[data-theme="dark"]{--bg:#121a15;--fg:#dbe7de;--mut:#8fa396;--pn:#18221c;--ln:#2c3b31;--ac:#6fcf9b;--bad:#e0735c}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 "Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;overflow:hidden}
+#app{height:100%;display:flex;flex-direction:column}
+header{padding:8px 12px 4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}h1{font-size:15px;margin:0 auto 0 0}
+button{font:inherit;font-size:13px;padding:6px 11px;border-radius:8px;border:1px solid var(--ln);background:var(--pn);color:var(--fg);cursor:pointer}
+button.on{border-color:var(--ac);color:var(--ac);font-weight:700}button:active{transform:scale(.97)}button:disabled{opacity:.5}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:2px 12px 6px;font-size:12px;color:var(--mut)}
+#stage{flex:1;min-height:0;position:relative}#c{position:absolute;inset:0;width:100%;height:100%;display:block;background:#080e0b}
+#inf{padding:6px 12px;font-size:12px;color:var(--mut);background:var(--pn);border-top:1px solid var(--ln)}
+#pop{flex:none;max-height:36vh;overflow-y:auto;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:6px 12px 12px;background:var(--pn)}
+#pop canvas{width:100%;aspect-ratio:1;border-radius:8px;border:2px solid var(--ln);cursor:pointer}
+#pop canvas.ok{border-color:var(--ac)}#pop canvas.bad{border-color:var(--bad);opacity:.55}#pop canvas.sel{outline:2px solid var(--fg)}
+input[type=range]{width:90px;accent-color:var(--ac)}
+</style></head><body><div id="app">
+<header><h1>敵人演化 原型</h1><button id="stp">+1 代</button><button id="run">跑 20 代</button><button id="rst">重置</button></header>
+<div class="row">玩家習慣：<button data-h="0">不動</button><button data-h="1">左右掃</button><button data-h="2">會閃避</button> 突變率<input id="mu" type="range" min=".2" max="3" step=".1" value="1"><span id="muv">1.0</span></div>
+<div id="stage"><canvas id="c"></canvas></div>
+<div id="inf"></div>
+<div id="pop"></div>
+</div>
+<script>
+"use strict";
+const $=id=>document.getElementById(id),R=Math.random,cl=(v,a,b)=>Math.max(a,Math.min(b,v)),g3=()=>R()+R()+R()-1.5,TAU=Math.PI*2;
+const NG=14,CAP=40,PY=1,EY=.05,SP=.9,PN=16,MODS=["","分裂","加速","蛇行","追蹤","爆裂"],PATS=["扇形","彈牆","落雨","光束"],SHS=["圓彈","針彈","菱彈","大球"];
+let MU=1,HAB=2,POP=[],GEN=0,SEL=null,LS=null,HIST=[],busy=false,cv=$("c");
+/* 基因：發射器樹。第 12 個基因 aim：0 固定向下，1 瞄準玩家 */
+const founder=()=>({em:[[.3,.25,.45,.45,.5,.5,.6,.4,R(),0,.5,.3,0,0]],gen:0,note:""});
+function ex(e){const sh=Math.min(3,Math.floor(e[13]*4)),sv=[1,1.5,1.1,.65][sh],sr=[1,.7,1,1.8][sh];return{n:1+Math.round(e[0]*e[0]*8),spread:e[1]*TAU*.6,rate:.4+e[2]*4,v:(.3+e[3]*.5)*sv,spin:(e[4]-.5)*3,curve:(e[5]-.5)*2.4,life:1.2+e[6]*3,size:(.008+e[7]*.022)*sr,hue:e[8]*360,mod:Math.min(5,Math.floor(e[9]*6)),off:(e[10]-.5)*1.2,aim:e[11],pat:Math.min(3,Math.floor(e[12]*4)),sh}}
+function budget(g){const P=g.em.map(ex);let L=0;P.forEach(p=>L+=[p.n,(6+p.n)*.3,p.n*.9,.4][p.pat]*p.rate*(p.pat===3?1.6:p.life));const k=L>CAP?CAP/L:1;P.forEach(p=>p.rate*=k);return{P,L:Math.min(L,CAP)}}
+function mutG(e){return e.map((v,i)=>{let y=v;if(R()<.01*MU)y=R();else if(R()<.08*MU)y=v+g3()*.3;if((i===9||i===12||i===13)&&R()<.04*MU)y=R();return i===8?((y%1)+1)%1:cl(y,0,1)})}
+function mate(A,B){const n=Math.max(A.em.length,B.em.length);let em=[];
+ for(let i=0;i<n;i++){const a=A.em[i],b=B.em[i];if(a&&b)em.push(a.map((v,j)=>R()<.5?v:b[j]));else if(R()<.7)em.push((a||b).slice())}
+ if(!em.length)em.push(A.em[0].slice());em=em.map(mutG);const ev=[];
+ if(R()<.12*MU&&em.length<5){const e=em[Math.floor(R()*em.length)].slice();for(let k=0;k<3;k++)e[Math.floor(R()*NG)]=R();e[12]=R();e[13]=R();em.push(e);ev.push("新增")}
+ if(R()<.07*MU&&em.length<5){const e=em[Math.floor(R()*em.length)].slice();e[4]=1-e[4];e[5]=1-e[5];e[10]=1-e[10];em.push(e);ev.push("鏡像")}
+ if(R()<.08*MU&&em.length>1){em.splice(Math.floor(R()*em.length),1);ev.push("移除")}
+ return{em,gen:Math.max(A.gen,B.gen)+1,note:ev.join("、")}}
+/* 模擬：敵人在上方，玩家在下方，玩家有三種習慣 */
+function mkE(g,hab){const{P,L}=budget(g);return{P,L,b:[],lz:[],t:0,acc:P.map(()=>R()*.9),px:0,hit:0,inv:0,move:0,hab,hist:[0,0,0,0,0,0]}}
+function plan(s){let best=0,bd=1e9;for(const c of[0,-1,1,-.5,.5]){const vx=c*SP;let d=0;for(const tau of[.1,.2,.3]){const px=cl(s.px+vx*tau,-.95,.95);for(const b of s.b){if(Math.abs(b.y-PY)>.45)continue;const dx=b.x+Math.cos(b.a)*b.v*tau-px,dy=b.y+Math.sin(b.a)*b.v*tau-PY;d+=1/(dx*dx+dy*dy+.004)}}
+  for(const l of s.lz)for(const tau of[.1,.2,.3]){const tt=l.t+tau;if(tt<.65||tt>1.2)continue;const qx=cl(s.px+vx*tau,-.95,.95),dd=Math.abs(qx*Math.sin(l.a)-(PY-EY)*Math.cos(l.a));d+=1/(dd*dd+.004)}
+  const fx=Math.abs(s.px+vx*.3);d+=(fx>.85?30:0)+Math.abs(c)*.5+fx*.3;if(d<bd){bd=d;best=vx}}return best}
+function stepE(s,dt){s.t+=dt;s.inv=Math.max(0,s.inv-dt);
+ s.P.forEach((p,k)=>{s.acc[k]+=dt*p.rate*[1,.3,1,.25][p.pat];while(s.acc[k]>=1){s.acc[k]--;const base=Math.PI/2+p.off+p.spin*s.t,ta=Math.atan2(PY-EY,s.px),a0=base+(ta-base)*p.aim,mk=(x,y,a,v,w=p.curve)=>s.b.push({x,y,a,v,w,age:0,life:p.life,sz:p.size,r:p.size,sh:p.sh,h:p.hue,m:p.mod});
+  if(p.pat===0)for(let i=0;i<p.n;i++){const f=p.n<2?0:(p.spread>3.4?i/p.n-.5:i/(p.n-1)-.5);mk(0,EY,a0+f*p.spread,p.v)}
+  else if(p.pat===1){const r0=R()*1.6-.8,gx=r0+(s.px-r0)*p.aim,m=6+p.n;for(let i=0;i<m;i++){const x=-.95+1.9*i/(m-1);if(Math.abs(x-gx)>.24)mk(x,EY,Math.PI/2+p.off*.2,p.v*.6,0)}}
+  else if(p.pat===2){for(let i=0;i<Math.ceil(p.n/2);i++)mk(R()*2-1,-.02,Math.PI/2+p.off*.2,p.v,0)}
+  else{for(let i=0;i<(p.n>3?2:1);i++)s.lz.push({a:a0+(i?(i%2?1:-1)*.4:0),t:0,h:p.hue})}}});
+ const ox=s.px;if(s.hab===0)s.px=0;else if(s.hab===1)s.px=.8*Math.sin(s.t*1.1);else s.px=cl(s.px+plan(s)*dt,-.95,.95);s.move+=Math.abs(s.px-ox);
+ const nb=[];for(const b of s.b){b.age+=dt;b.a+=b.w*dt;if(b.m===3)b.a+=Math.sin(b.age*9)*1.6*dt;if(b.m===2)b.v*=1+1.3*dt;if(b.m===4&&b.age<1.6){let q=Math.atan2(PY-b.y,s.px-b.x)-b.a;q=Math.atan2(Math.sin(q),Math.cos(q));b.a+=cl(q,-1,1)*1.1*dt}
+  b.x+=Math.cos(b.a)*b.v*dt;b.y+=Math.sin(b.a)*b.v*dt;
+  if(b.y>1.3||b.y<-.3||Math.abs(b.x)>1.2)continue;if(b.age>=b.life){if(b.m===5)for(let k=0;k<6;k++)nb.push({...b,a:b.a+k*TAU/6+.3,v:b.v*.9,w:0,age:0,life:.9,sz:b.sz*.8,r:b.r*.8,sh:0,m:0});continue}
+  if(b.m===1&&b.age>b.life*.45){for(const d of[-.5,.5])nb.push({...b,a:b.a+d,m:0,w:b.w*.5});continue}
+  if(b.y>.85&&b.y<1.1)s.hist[cl(Math.floor((b.x+1)*3),0,5)]++;
+  const dx=b.x-s.px,dy=b.y-PY;if(!s.inv&&dx*dx+dy*dy<(.03+b.r)*(.03+b.r)){s.hit++;s.inv=.5}
+  nb.push(b)}s.b=nb;for(const l of s.lz){l.t+=dt;if(!s.inv&&l.t>.8&&l.t<1.15&&s.px*Math.cos(l.a)+(PY-EY)*Math.sin(l.a)>0&&Math.abs(s.px*Math.sin(l.a)-(PY-EY)*Math.cos(l.a))<.035){s.hit++;s.inv=.5}}s.lz=s.lz.filter(l=>l.t<1.25)}
+const run=(g,hab,T=12)=>{const s=mkE(g,hab);for(let i=0;i<T*30;i++)stepE(s,1/30);return s};
+/* 評估：適應度 = 擊中習慣機器人的次數（加閃避時的被迫移動）；會閃避機器人被打超過 2 次視為不公平，淘汰 */
+function evalPop(pop){const hs=[];
+ pop.forEach(g=>{const s=run(g,HAB),sm=HAB===2?s:run(g,2);g.hit=s.hit;g.smart=sm.hit;g.fair=sm.hit<=2;g.fit=g.fair?Math.min(s.hit,6)+(HAB===2?.1*s.move:0):-1;const t=s.hist.reduce((a,b)=>a+b,0)||1;hs.push(s.hist.map(x=>x/t))});
+ pop.forEach((g,i)=>{if(!g.fair)return;let d=9;pop.forEach((h,j)=>{if(i===j||!h.fair)return;let l=0;for(let k=0;k<6;k++)l+=Math.abs(hs[i][k]-hs[j][k]);d=Math.min(d,l)});g.fit*=.6+.4*Math.min(1,d/.5)})}
+function newGen(){const par=POP.filter(g=>g.fair).sort((a,b)=>b.fit-a.fit).slice(0,5);
+ if(par.length<2){const f=founder(),mu=MU;MU=2;par.push(f,mate(f,f));MU=mu}
+ const nx=par.slice(0,3).map(g=>({...g}));while(nx.length<PN){const a=par[Math.floor(R()*par.length)],b=par[Math.floor(R()*par.length)];nx.push(mate(a,b))}
+ POP=nx;GEN++;evalPop(POP);const best=Math.max(...POP.map(g=>g.fit));HIST.push(best);SEL=POP.slice().sort((a,b)=>b.fit-a.fit)[0];render()}
+/* 繪製 */
+function size(c,W,H){const d=devicePixelRatio||1;if(c.width!==Math.round(W*d)||c.height!==Math.round(H*d)){c.width=Math.round(W*d);c.height=Math.round(H*d)}const x=c.getContext("2d");x.setTransform(d,0,0,d,0,0);return x}
+function dots(x,s,W,H,al,flash){const U=Math.min(W/2,H/1.15);x.fillStyle="#6a7d72";x.beginPath();x.moveTo(W/2,EY*U+7);x.lineTo(W/2-7,EY*U-4);x.lineTo(W/2+7,EY*U-4);x.fill();
+ for(const l of s.lz){const act=l.t>.8&&l.t<1.15;x.strokeStyle=`hsla(${l.h},85%,65%,${act?.9:.28})`;x.lineWidth=act?7:1;x.beginPath();x.moveTo(W/2,EY*U);x.lineTo(W/2+Math.cos(l.a)*3*U,EY*U+Math.sin(l.a)*3*U);x.stroke()}
+ for(const b of s.b){const r=Math.max(1.4,b.r*U),X=W/2+b.x*U,Y=b.y*U;x.fillStyle=`hsla(${b.h},85%,62%,${al})`;x.beginPath();
+  if(b.sh===1)x.ellipse(X,Y,r*3,r*.6,b.a,0,TAU);else if(b.sh===2){x.save();x.translate(X,Y);x.rotate(b.a+.785);x.rect(-r,-r,2*r,2*r);x.restore()}else x.arc(X,Y,r,0,TAU);x.fill();
+  if(b.sh===3&&al>.6){x.strokeStyle=`hsla(${b.h},90%,85%,.7)`;x.lineWidth=1;x.stroke()}}
+ x.fillStyle=flash?"#ff6a55":"#cfe8d8";x.beginPath();x.arc(W/2+s.px*U,PY*U,Math.max(2.5,.03*U),0,TAU);x.fill()}
+function thumb(c,g){const x=size(c,80,80);x.fillStyle="#080e0b";x.fillRect(0,0,80,80);const s=mkE(g,HAB);for(let i=0;i<70;i++){stepE(s,1/30);dots(x,s,80,80,.4,0)}}
+function loop(){const W=cv.clientWidth,H=cv.clientHeight;if(W&&H&&LS){const x=size(cv,W,H);stepE(LS,1/30);if(LS.t>16)LS=mkE(SEL,HAB);x.fillStyle="rgba(8,14,11,.4)";x.fillRect(0,0,W,H);dots(x,LS,W,H,.95,LS.inv>0);x.fillStyle="#cfe8d8";x.font="12px sans-serif";x.fillText("被擊中 "+LS.hit,8,16)}requestAnimationFrame(loop)}
+function render(){const p=$("pop");p.innerHTML="";const best=POP.reduce((a,b)=>b.fit>a.fit?b:a);
+ POP.forEach(g=>{const c=document.createElement("canvas");c.className=(g.fair?"ok":"bad")+(g===SEL?" sel":"");c.onclick=()=>{SEL=g;LS=mkE(g,HAB);render()};p.appendChild(c)});
+ requestAnimationFrame(()=>POP.forEach((g,i)=>thumb(p.children[i],g)));
+ if(!LS||LS.src!==SEL){LS=mkE(SEL,HAB);LS.src=SEL}
+ const fr=POP.filter(g=>g.fair).length,{P,L}=budget(SEL),tg=[...new Set(P.flatMap(q=>[PATS[q.pat],SHS[q.sh],MODS[q.mod]]).filter(Boolean))].join("、");
+ $("inf").textContent=`第 ${GEN} 代　合格 ${fr}/${PN}　最佳 ${best.fit.toFixed(1)}　歷史 ${HIST.slice(-8).map(v=>v.toFixed(1)).join("→")}\n選中：發射器 ${SEL.em.length}　負載 ${Math.round(L)}/${CAP}　命中 ${SEL.hit}　${SEL.fair?"可閃避（閃避機器人被打 "+SEL.smart+" 次）":"不公平，已淘汰（被打 "+SEL.smart+" 次）"}${tg?"　"+tg:""}${SEL.note?"　本代："+SEL.note:""}`;
+ $("inf").style.whiteSpace="pre-line"}
+function reset(){GEN=0;HIST=[];const f=founder(),mu=MU;MU=2.5;POP=[f];while(POP.length<PN)POP.push(mate(f,f));MU=mu;POP.forEach((g,i)=>{g.gen=0;if(i%2){g.em[0][12]=R();g.em[0][13]=R();g.em[0][9]=R()}});evalPop(POP);SEL=POP.slice().sort((a,b)=>b.fit-a.fit)[0];LS=null;render()}
+async function runN(n){if(busy)return;busy=true;$("run").disabled=$("stp").disabled=true;for(let i=0;i<n;i++){await new Promise(r=>setTimeout(r,16));newGen()}busy=false;$("run").disabled=$("stp").disabled=false}
+$("stp").onclick=()=>runN(1);$("run").onclick=()=>runN(20);$("rst").onclick=()=>{if(!busy)reset()};
+document.querySelectorAll("[data-h]").forEach(b=>b.onclick=()=>{HAB=+b.dataset.h;document.querySelectorAll("[data-h]").forEach(x=>x.classList.toggle("on",x===b));if(!busy){evalPop(POP);SEL=POP.slice().sort((a,b)=>b.fit-a.fit)[0];LS=null;render()}});
+$("mu").oninput=e=>{MU=+e.target.value;$("muv").textContent=MU.toFixed(1)};
+document.querySelector('[data-h="2"]').classList.add("on");reset();requestAnimationFrame(loop);
+</script></body></html>
