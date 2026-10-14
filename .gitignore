@@ -1,0 +1,10 @@
+# 平台自動產生的目錄
+.DS_Store
+Thumbs.db
+node_modules/
+.vscode/
+.idea/
+
+# 暫存與工具產物
+*.log
+.probe/
